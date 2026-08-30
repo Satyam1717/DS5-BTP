@@ -1,0 +1,18 @@
+strategy: lerp
+lam: 0.1
+weights: null
+deterministic: true
+scale: 0.025
+device: cpu
+target_index: 0
+space: latent   # latent | weight
+
+align:
+  enabled: true
+  method: ot      # none | mean_std | ot
+  eps: 1.0e-4
+
+vae_config: external/ls-merge/vit_vae/configs/base_vit_vae_config.yaml
+vae_checkpoint: null
+
+output_dir: data/checkpoints/merged
