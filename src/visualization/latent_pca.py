@@ -97,6 +97,7 @@ def visualize_latent_pca(
     total_numel: int | None = None,
     chunk_size: int | None = None,
     annotate_every: int | None = None,
+    extra_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Path]:
     """Save ordered-chunk PCA coordinates, a PNG trajectory, and metadata.
 
@@ -154,5 +155,7 @@ def visualize_latent_pca(
         "metadata_per_tensor": _json_value(list(metadata)),
         "chunk_records": records,
     }
+    if extra_metadata:
+        reproducibility["input_artifacts"] = _json_value(dict(extra_metadata))
     metadata_path.write_text(json.dumps(reproducibility, indent=2), encoding="utf-8")
     return {"csv": csv_path, "plot": plot_path, "metadata": metadata_path}

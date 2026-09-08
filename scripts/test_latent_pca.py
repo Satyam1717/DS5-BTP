@@ -16,6 +16,17 @@ sys.path.insert(0, str(ROOT))
 from src.visualization import visualize_latent_pca
 
 
+def _visualization_script_module():
+    import importlib.util
+
+    script_path = ROOT / "scripts" / "visualize_latent_pca.py"
+    spec = importlib.util.spec_from_file_location("visualize_latent_pca_script", script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_synthetic_latent_pca() -> None:
     latents = torch.arange(4 * 2 * 3, dtype=torch.float32).reshape(4, 2, 3)
     metadata = [
@@ -38,6 +49,17 @@ def test_synthetic_latent_pca() -> None:
         assert result_metadata["chunk_records"][1]["tensor_count"] == 2
 
 
+def test_model_checkpoint_loader() -> None:
+    script = _visualization_script_module()
+    expected = {"layers.0.weight": torch.ones(2, 2)}
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        checkpoint_path = Path(temporary_directory) / "model.pth"
+        torch.save({"model_state_dict": expected, "epoch": 1}, checkpoint_path)
+        loaded = script.load_state_dict(checkpoint_path)
+    assert torch.equal(loaded["layers.0.weight"], expected["layers.0.weight"])
+
+
 if __name__ == "__main__":
     test_synthetic_latent_pca()
+    test_model_checkpoint_loader()
     print("Synthetic latent PCA test passed.")
