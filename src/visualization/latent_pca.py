@@ -72,20 +72,48 @@ def _chunk_records(
     return records
 
 
-def _pca_2d(features: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Run deterministic PCA using NumPy, avoiding an extra dependency."""
+def _pca_2d(
+    features: np.ndarray,
+    *,
+    batch_size: int = 1024,
+    oversamples: int = 8,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run deterministic randomized PCA without materializing a centered matrix.
+
+    The calculation retains one 2-D coordinate per row while processing feature
+    batches.  It avoids the prohibitive full SVD of a large chunk-latent matrix.
+    """
     if features.ndim != 2 or features.shape[0] < 2:
         raise ValueError("PCA requires at least two chunk feature vectors")
-    centered = features - features.mean(axis=0, keepdims=True)
-    _, singular_values, right_vectors = np.linalg.svd(centered, full_matrices=False)
-    coordinates = centered @ right_vectors[:2].T
-    if coordinates.shape[1] == 1:
-        coordinates = np.column_stack((coordinates, np.zeros(features.shape[0])))
-    total_variance = np.square(singular_values).sum()
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    mean = features.mean(axis=0, dtype=np.float64).astype(np.float32)
+    rank = min(features.shape[0], features.shape[1], 2 + oversamples)
+    rng = np.random.default_rng(0)
+    projection = rng.standard_normal((features.shape[1], rank), dtype=np.float32)
+    sketch = np.empty((features.shape[0], rank), dtype=np.float32)
+    total_variance = 0.0
+    for start in range(0, features.shape[0], batch_size):
+        stop = min(start + batch_size, features.shape[0])
+        centered = features[start:stop] - mean
+        sketch[start:stop] = centered @ projection
+        total_variance += float(np.square(centered, dtype=np.float32).sum(dtype=np.float64))
+
+    orthogonal, _ = np.linalg.qr(sketch, mode="reduced")
+    compressed = np.zeros((rank, features.shape[1]), dtype=np.float32)
+    for start in range(0, features.shape[0], batch_size):
+        stop = min(start + batch_size, features.shape[0])
+        compressed += orthogonal[start:stop].T @ (features[start:stop] - mean)
+    _, singular_values, right_vectors = np.linalg.svd(compressed, full_matrices=False)
+    components = right_vectors[:2]
+    coordinates = np.empty((features.shape[0], 2), dtype=np.float32)
+    for start in range(0, features.shape[0], batch_size):
+        stop = min(start + batch_size, features.shape[0])
+        coordinates[start:stop] = (features[start:stop] - mean) @ components.T
     explained = np.zeros(2) if total_variance == 0 else np.square(singular_values[:2]) / total_variance
-    if explained.size == 1:
-        explained = np.append(explained, 0.0)
-    return coordinates, explained, features.mean(axis=0)
+    if explained.size < 2:
+        explained = np.pad(explained, (0, 2 - explained.size))
+    return coordinates, explained, mean
 
 
 def visualize_latent_pca(
@@ -98,6 +126,7 @@ def visualize_latent_pca(
     chunk_size: int | None = None,
     annotate_every: int | None = None,
     extra_metadata: Mapping[str, Any] | None = None,
+    pca_batch_size: int = 1024,
 ) -> dict[str, Path]:
     """Save ordered-chunk PCA coordinates, a PNG trajectory, and metadata.
 
@@ -109,7 +138,7 @@ def visualize_latent_pca(
         raise ValueError("latents must have shape (num_chunks, ...)")
     num_chunks = latent_array.shape[0]
     features = latent_array.reshape(num_chunks, -1)
-    coordinates, explained, feature_mean = _pca_2d(features)
+    coordinates, explained, feature_mean = _pca_2d(features, batch_size=pca_batch_size)
     records = _chunk_records(num_chunks, metadata, total_numel, chunk_size)
 
     destination = Path(output_dir)
@@ -147,7 +176,8 @@ def visualize_latent_pca(
         "visualization_unit": "global weight chunk",
         "latent_shape": list(latent_array.shape),
         "pca_feature_shape": list(features.shape),
-        "pca_method": "NumPy SVD on centered, flattened per-chunk latent features",
+        "pca_method": "deterministic randomized PCA on flattened per-chunk latent features",
+        "pca_batch_size": pca_batch_size,
         "explained_variance_ratio": explained.tolist(),
         "feature_mean": feature_mean.tolist(),
         "chunk_size": chunk_size,

@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.visualization import visualize_latent_pca
+from src.merge.vae_bridge import VaeBridge
 
 
 def _visualization_script_module():
@@ -59,7 +60,25 @@ def test_model_checkpoint_loader() -> None:
     assert torch.equal(loaded["layers.0.weight"], expected["layers.0.weight"])
 
 
+def test_batched_encoding() -> None:
+    class FakeVae:
+        def encode(self, x):
+            z = x.reshape(x.shape[0], 2, 2)
+            return z, z + 1, z + 2
+
+    bridge = object.__new__(VaeBridge)
+    bridge.device = torch.device("cpu")
+    bridge.model = FakeVae()
+    chunks = torch.arange(20, dtype=torch.float32).reshape(5, 4)
+    latents, mu, logvar = bridge.encode_chunks(chunks, batch_size=2)
+    assert latents.shape == (5, 2, 2)
+    assert torch.equal(latents, chunks.reshape(5, 2, 2) + 1)
+    assert mu is latents
+    assert torch.equal(logvar, chunks.reshape(5, 2, 2) + 2)
+
+
 if __name__ == "__main__":
     test_synthetic_latent_pca()
     test_model_checkpoint_loader()
+    test_batched_encoding()
     print("Synthetic latent PCA test passed.")
